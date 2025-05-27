@@ -8,14 +8,13 @@ from django.utils import timezone
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from django.contrib.gis.geos import Point
-from django.contrib.gis.measure import D
 from Parole import settings
 from .models import *
 from .serializers import *
 from .utils import GeofenceChecker, AlertManager
 import json
 import logging
+from geopy.distance import geodesic
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +112,6 @@ class LocationUpdateView(APIView):
             return True
         
         # Save if significant movement (>50 meters)
-        from geopy.distance import geodesic
         old_point = (float(last_history.latitude), float(last_history.longitude))
         new_point = (float(new_data['latitude']), float(new_data['longitude']))
         distance = geodesic(old_point, new_point).meters
