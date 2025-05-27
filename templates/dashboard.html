@@ -1,0 +1,347 @@
+
+<!-- templates/tracking/dashboard.html -->
+{% extends 'tracking/base.html' %}
+
+{% block title %}Dashboard - Parole Tracking System{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Statistics Cards -->
+    <div class="col-md-3 mb-4">
+        <div class="card text-white bg-primary">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 class="card-title">{{ active_inmates }}</h4>
+                        <p class="card-text">Active Inmates</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-users fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card text-white bg-danger">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 class="card-title">{{ active_alerts }}</h4>
+                        <p class="card-text">Active Alerts</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-exclamation-triangle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card text-white bg-warning">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 class="card-title">{{ low_battery_devices }}</h4>
+                        <p class="card-text">Low Battery</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-battery-quarter fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card text-white bg-success">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 class="card-title" id="online-devices">0</h4>
+                        <p class="card-text">Online Devices</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-wifi fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Recent Alerts -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-bell"></i> Recent Alerts
+                </h5>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                <div id="recent-alerts">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Current Locations -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-map-marker-alt"></i> Current Locations
+                </h5>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                <div id="current-locations">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Map Preview -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-map"></i> Location Overview
+                </h5>
+                <a href="{% url 'real_time_map' %}" class="btn btn-primary btn-sm">
+                    <i class="fas fa-expand"></i> Full Map View
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <div id="dashboard-map" style="height: 400px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initMap" async defer></script>
+<script>
+let map;
+let markers = [];
+
+function initMap() {
+    // Initialize map centered on a default location
+    map = new google.maps.Map(document.getElementById('dashboard-map'), {
+        zoom: 10,
+        center: { lat: -1.2921, lng: 36.8219 }, // Nairobi, Kenya - change as needed
+        mapTypeId: 'roadmap'
+    });
+    
+    loadMapData();
+}
+
+function loadMapData() {
+    fetch('/api/map-data/')
+        .then(response => response.json())
+        .then(data => {
+            updateMap(data);
+            updateDashboardStats(data);
+        })
+        .catch(error => {
+            console.error('Error loading map data:', error);
+        });
+}
+
+function updateMap(data) {
+    // Clear existing markers
+    markers.forEach(marker => marker.setMap(null));
+    markers = [];
+    
+    // Add location markers
+    data.locations.forEach(location => {
+        const marker = new google.maps.Marker({
+            position: { lat: location.latitude, lng: location.longitude },
+            map: map,
+            title: location.inmate_name,
+            icon: getMarkerIcon(location.status)
+        });
+        
+        const infoWindow = new google.maps.InfoWindow({
+            content: `
+                <div>
+                    <h6>${location.inmate_name}</h6>
+                    <p><strong>Device:</strong> ${location.device_id}</p>
+                    <p><strong>Battery:</strong> ${location.battery_level}%</p>
+                    <p><strong>Status:</strong> ${location.status}</p>
+                    <p><strong>Last Update:</strong> ${new Date(location.last_update).toLocaleString()}</p>
+                </div>
+            `
+        });
+        
+        marker.addListener('click', () => {
+            infoWindow.open(map, marker);
+        });
+        
+        markers.push(marker);
+    });
+    
+    // Add alert markers
+    data.alerts.forEach(alert => {
+        const marker = new google.maps.Marker({
+            position: { lat: alert.latitude, lng: alert.longitude },
+            map: map,
+            title: `Alert: ${alert.type}`,
+            icon: getAlertMarkerIcon(alert.severity)
+        });
+        
+        const infoWindow = new google.maps.InfoWindow({
+            content: `
+                <div>
+                    <h6 class="text-danger">ALERT: ${alert.type.toUpperCase()}</h6>
+                    <p><strong>Inmate:</strong> ${alert.inmate_name}</p>
+                    <p><strong>Severity:</strong> ${alert.severity}</p>
+                    <p><strong>Description:</strong> ${alert.description}</p>
+                    <p><strong>Time:</strong> ${new Date(alert.created_at).toLocaleString()}</p>
+                </div>
+            `
+        });
+        
+        marker.addListener('click', () => {
+            infoWindow.open(map, marker);
+        });
+        
+        markers.push(marker);
+    });
+}
+
+function getMarkerIcon(status) {
+    const colors = {
+        'active': 'green',
+        'low_battery': 'orange',
+        'inactive': 'red',
+        'tampered': 'red'
+    };
+    
+    return `https://maps.google.com/mapfiles/ms/icons/${colors[status] || 'blue'}-dot.png`;
+}
+
+function getAlertMarkerIcon(severity) {
+    const colors = {
+        'critical': 'red',
+        'high': 'orange',
+        'medium': 'yellow',
+        'low': 'blue'
+    };
+    
+    return `https://maps.google.com/mapfiles/ms/icons/${colors[severity] || 'red'}-dot.png`;
+}
+
+function updateDashboardStats(data) {
+    // Update online devices count
+    const onlineDevices = data.locations.filter(loc => loc.status === 'active').length;
+    document.getElementById('online-devices').textContent = onlineDevices;
+}
+
+function loadRecentAlerts() {
+    fetch('/api/alerts/?status=new&status=acknowledged')
+        .then(response => response.json())
+        .then(data => {
+            const alertsContainer = document.getElementById('recent-alerts');
+            if (data.results && data.results.length > 0) {
+                alertsContainer.innerHTML = data.results.slice(0, 5).map(alert => `
+                    <div class="alert-item alert-${alert.severity} p-3 mb-2 bg-light rounded">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="mb-1">${alert.title}</h6>
+                                <p class="mb-1 text-muted">${alert.inmate_name} ${alert.inmate_last_name}</p>
+                                <small class="text-muted">${new Date(alert.created_at).toLocaleString()}</small>
+                            </div>
+                            <span class="badge bg-${getSeverityColor(alert.severity)}">${alert.severity}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                alertsContainer.innerHTML = '<p class="text-muted text-center">No recent alerts</p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading alerts:', error);
+            document.getElementById('recent-alerts').innerHTML = '<p class="text-danger text-center">Error loading alerts</p>';
+        });
+}
+
+function loadCurrentLocations() {
+    fetch('/api/locations/')
+        .then(response => response.json())
+        .then(data => {
+            const locationsContainer = document.getElementById('current-locations');
+            if (data.results && data.results.length > 0) {
+                locationsContainer.innerHTML = data.results.map(location => `
+                    <div class="d-flex justify-content-between align-items-center p-3 mb-2 bg-light rounded">
+                        <div>
+                            <h6 class="mb-1">${location.inmate_name} ${location.inmate_last_name}</h6>
+                            <p class="mb-1 text-muted">Device: ${location.device_id}</p>
+                            <small class="text-muted">Updated: ${new Date(location.updated_at).toLocaleString()}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-${getBatteryColor(location.device.battery_level)}">
+                                ${location.device.battery_level}%
+                            </span>
+                            <br>
+                            <small class="status-${location.device.status === 'active' ? 'online' : 'offline'}">
+                                <i class="fas fa-circle"></i> ${location.device.status}
+                            </small>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                locationsContainer.innerHTML = '<p class="text-muted text-center">No active devices</p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading locations:', error);
+            document.getElementById('current-locations').innerHTML = '<p class="text-danger text-center">Error loading locations</p>';
+        });
+}
+
+function getSeverityColor(severity) {
+    const colors = {
+        'critical': 'danger',
+        'high': 'danger',
+        'medium': 'warning',
+        'low': 'info'
+    };
+    return colors[severity] || 'secondary';
+}
+
+function getBatteryColor(level) {
+    if (level > 50) return 'success';
+    if (level > 20) return 'warning';
+    return 'danger';
+}
+
+// Load data on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadRecentAlerts();
+    loadCurrentLocations();
+    
+    // Refresh data every 30 seconds
+    setInterval(() => {
+        loadMapData();
+        loadRecentAlerts();
+        loadCurrentLocations();
+    }, 30000);
+});
+</script>
+{% endblock %}
