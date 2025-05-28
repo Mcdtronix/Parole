@@ -70,7 +70,7 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # Google Maps API Key
-GOOGLE_MAPS_API_KEY = 'your_google_maps_api_key_here'
+GOOGLE_MAPS_API_KEY = 'AIzaSyD-mjhjxL1YlqfA5AeyiSnyBeMnjST9z_c'  # Replace with your actual API key
 
 # Logging configuration
 LOGGING = {

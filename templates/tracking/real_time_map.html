@@ -3,6 +3,40 @@
 
 {% block title %}Real-time Map - Parole Tracking System{% endblock %}
 
+{% block extra_css %}
+<style>
+    .fullscreen-map {
+        height: calc(100vh - 60px);
+        width: 100%;
+        position: relative;
+        background-color: #f8f9fa;
+    }
+    .sidebar {
+        background-color: #2c3e50;
+        height: calc(100vh - 60px);
+        overflow-y: auto;
+    }
+    .form-select, .form-control {
+        background-color: #34495e;
+        border-color: #2c3e50;
+        color: white;
+    }
+    .form-select:focus, .form-control:focus {
+        background-color: #34495e;
+        border-color: #3498db;
+        color: white;
+    }
+    .form-select option {
+        background-color: #34495e;
+        color: white;
+    }
+    #real-time-map {
+        height: 100%;
+        width: 100%;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <div class="row">
@@ -132,10 +166,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script async defer
-    src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initRealTimeMap">
-</script>
-
 <script>
 let realTimeMap;
 let markers = [];
@@ -145,9 +175,16 @@ let isAutoRefreshing = false;
 let selectedAlert = null;
 
 function initRealTimeMap() {
-    realTimeMap = new google.maps.Map(document.getElementById('real-time-map'), {
-        zoom: 12,
-        center: { lat: -1.2921, lng: 36.8219 }, // Default to Nairobi
+    console.log('Initializing map...');
+    const mapElement = document.getElementById('real-time-map');
+    if (!mapElement) {
+        console.error('Map element not found!');
+        return;
+    }
+
+    realTimeMap = new google.maps.Map(mapElement, {
+        zoom: 6,
+        center: { lat: -19.0154, lng: 29.1549 }, // Centered on Zimbabwe
         mapTypeId: 'roadmap',
         styles: [
             {
@@ -157,7 +194,8 @@ function initRealTimeMap() {
             }
         ]
     });
-    
+
+    console.log('Map initialized');
     loadRealTimeData();
     
     // Add event listeners
@@ -276,3 +314,166 @@ function createAlertInfoWindow(alert) {
             </h6>
             <table class="table table-sm">
                 <tr><td><strong>Inmate:</strong></td><td>${alert.inmate_name}</td></tr>
+                <tr><td><strong>Severity:</strong></td><td><span class="badge bg-${getSeverityBadge(alert.severity)}">${alert.severity}</span></td></tr>
+                <tr><td><strong>Time:</strong></td><td>${new Date(alert.created_at).toLocaleString()}</td></tr>
+                <tr><td><strong>Description:</strong></td><td>${alert.description}</td></tr>
+            </table>
+        </div>
+    `;
+}
+
+function getMarkerIcon(status) {
+    const colors = {
+        'active': 'green',
+        'low_battery': 'yellow',
+        'tampered': 'red',
+        'maintenance': 'blue',
+        'inactive': 'gray'
+    };
+    return `https://maps.google.com/mapfiles/ms/icons/${colors[status] || 'blue'}-dot.png`;
+}
+
+function getStatusBadge(status) {
+    const colors = {
+        'active': 'success',
+        'low_battery': 'warning',
+        'tampered': 'danger',
+        'maintenance': 'info',
+        'inactive': 'secondary'
+    };
+    return colors[status] || 'secondary';
+}
+
+function getSeverityBadge(severity) {
+    const colors = {
+        'critical': 'danger',
+        'high': 'danger',
+        'medium': 'warning',
+        'low': 'info'
+    };
+    return colors[severity] || 'secondary';
+}
+
+function updateSidebar(data) {
+    const inmatesList = document.getElementById('inmatesList');
+    inmatesList.innerHTML = '';
+    
+    data.locations.forEach(location => {
+        const div = document.createElement('div');
+        div.className = 'd-flex align-items-center p-2 border-bottom';
+        div.innerHTML = `
+            <img src="${getMarkerIcon(location.status)}" width="20" height="20" class="me-2">
+            <div>
+                <div class="text-white">${location.inmate_name}</div>
+                <small class="text-muted">${location.device_id}</small>
+            </div>
+            <div class="ms-auto">
+                <span class="badge bg-${getStatusBadge(location.status)}">${location.status}</span>
+            </div>
+        `;
+        inmatesList.appendChild(div);
+    });
+}
+
+function updateStats(data) {
+    document.getElementById('onlineCount').textContent = data.locations.filter(loc => loc.status === 'active').length;
+    document.getElementById('alertCount').textContent = data.alerts.length;
+}
+
+function refreshMap() {
+    loadRealTimeData();
+}
+
+function toggleAutoRefresh() {
+    const button = document.getElementById('autoRefreshIcon');
+    const text = document.getElementById('autoRefreshText');
+    
+    if (isAutoRefreshing) {
+        clearInterval(autoRefreshInterval);
+        button.className = 'fas fa-play me-2';
+        text.textContent = 'Start Auto-refresh';
+    } else {
+        autoRefreshInterval = setInterval(loadRealTimeData, 30000); // Refresh every 30 seconds
+        button.className = 'fas fa-pause me-2';
+        text.textContent = 'Stop Auto-refresh';
+    }
+    
+    isAutoRefreshing = !isAutoRefreshing;
+}
+
+function filterData() {
+    const statusFilter = document.getElementById('statusFilter').value;
+    const alertFilter = document.getElementById('alertFilter').value;
+    const searchText = document.getElementById('inmateSearch').value.toLowerCase();
+    
+    markers.forEach(marker => {
+        const location = marker.location;
+        const alert = marker.alert;
+        
+        if (location) {
+            const statusMatch = !statusFilter || location.status === statusFilter;
+            const searchMatch = !searchText || 
+                location.inmate_name.toLowerCase().includes(searchText) ||
+                location.device_id.toLowerCase().includes(searchText);
+            
+            marker.setVisible(statusMatch && searchMatch);
+        } else if (alert) {
+            const alertMatch = !alertFilter || alert.type === alertFilter;
+            const searchMatch = !searchText || 
+                alert.inmate_name.toLowerCase().includes(searchText);
+            
+            marker.setVisible(alertMatch && searchMatch);
+        }
+    });
+}
+
+function centerOnLocation(lat, lng) {
+    realTimeMap.setCenter({ lat, lng });
+    realTimeMap.setZoom(15);
+}
+
+function viewHistory(deviceId) {
+    // Implement history view functionality
+    console.log('View history for device:', deviceId);
+}
+
+function acknowledgeAlert() {
+    if (selectedAlert) {
+        fetch(`/api/alerts/${selectedAlert.id}/acknowledge/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadRealTimeData();
+                $('#alertModal').modal('hide');
+            }
+        })
+        .catch(error => console.error('Error acknowledging alert:', error));
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+
+<script async defer
+    src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initRealTimeMap&libraries=places">
+</script>
+{% endblock %}
