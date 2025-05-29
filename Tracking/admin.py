@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Inmate, TrackingDevice, GeofenceZone, Alert, NotificationSettings, ParoleOfficer
+from .models import Inmate, TrackingDevice, GeofenceZone, Alert, NotificationSettings, ParoleOfficer, CurrentLocation, LocationHistory
 
 class InmateAdmin(admin.ModelAdmin):
     list_display = ('inmate_id', 'first_name', 'last_name', 'parole_status', 'assigned_officer')
@@ -30,9 +30,24 @@ class ParoleOfficerAdmin(admin.ModelAdmin):
     list_filter = ('department',)
     search_fields = ('user__username', 'badge_number', 'email')
 
+class CurrentLocationAdmin(admin.ModelAdmin):
+    list_display = ('device', 'latitude', 'longitude', 'speed', 'timestamp', 'updated_at')
+    list_filter = ('device__status',)
+    search_fields = ('device__device_id', 'device__inmate__first_name', 'device__inmate__last_name')
+    readonly_fields = ('updated_at',)
+
+class LocationHistoryAdmin(admin.ModelAdmin):
+    list_display = ('device', 'latitude', 'longitude', 'speed', 'timestamp', 'created_at')
+    list_filter = ('device__status',)
+    search_fields = ('device__device_id', 'device__inmate__first_name', 'device__inmate__last_name')
+    readonly_fields = ('created_at',)
+    date_hierarchy = 'timestamp'
+
 admin.site.register(Inmate, InmateAdmin)
 admin.site.register(TrackingDevice, TrackingDeviceAdmin)
 admin.site.register(GeofenceZone, GeofenceZoneAdmin)
 admin.site.register(Alert, AlertAdmin)
 admin.site.register(NotificationSettings, NotificationSettingsAdmin)
 admin.site.register(ParoleOfficer, ParoleOfficerAdmin)
+admin.site.register(CurrentLocation, CurrentLocationAdmin)
+admin.site.register(LocationHistory, LocationHistoryAdmin)

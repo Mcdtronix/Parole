@@ -1,4 +1,3 @@
-
 <!-- templates/tracking/dashboard.html -->
 {% extends 'tracking/base.html' %}
 
@@ -141,11 +140,15 @@ let map;
 let markers = [];
 
 function initMap() {
-    // Initialize map centered on a default location
+    // Initialize map centered on Zimbabwe
     map = new google.maps.Map(document.getElementById('dashboard-map'), {
-        zoom: 10,
-        center: { lat: -1.2921, lng: 36.8219 }, // Nairobi, Kenya - change as needed
-        mapTypeId: 'roadmap'
+        zoom: 6,  // Adjusted zoom level to show more of Zimbabwe
+        center: { lat: -19.0154, lng: 29.1549 }, // Center of Zimbabwe
+        mapTypeId: 'roadmap',
+        mapTypeControl: true,
+        streetViewControl: false,
+        fullscreenControl: true,
+        zoomControl: true
     });
     
     loadMapData();

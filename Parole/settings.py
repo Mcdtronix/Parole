@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-8)w!&lzbfs#6bk#(21&se@oog_5t#3gzvp!8=#==!))u$(%3xd
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -67,7 +67,9 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://192.168.97.247:8000",  # Your computer's IP
 ]
+
 
 # Google Maps API Key
 GOOGLE_MAPS_API_KEY = 'AIzaSyD-mjhjxL1YlqfA5AeyiSnyBeMnjST9z_c'  # Replace with your actual API key

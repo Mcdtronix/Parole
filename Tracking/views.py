@@ -21,19 +21,37 @@ logger = logging.getLogger(__name__)
 @method_decorator(csrf_exempt, name='dispatch')
 class LocationUpdateView(APIView):
     """API endpoint to receive location updates from tracking devices"""
+    authentication_classes = []  # Disable authentication
+    permission_classes = []      # Disable permission checks
     
     def post(self, request):
         try:
+            logger.info(f"Received location update request from IP: {request.META.get('REMOTE_ADDR')}")
+            logger.info(f"Raw request data: {request.body}")
+            logger.info(f"Parsed request data: {request.data}")
+            
             serializer = LocationUpdateSerializer(data=request.data)
             if serializer.is_valid():
                 data = serializer.validated_data
+                logger.info(f"Validated data: {data}")
+                
+                # Check for zero coordinates
+                if float(data['latitude']) == 0 and float(data['longitude']) == 0:
+                    logger.warning(f"Received zero coordinates for device {data['device_id']}")
+                    return Response({
+                        'status': 'warning',
+                        'message': 'Received zero coordinates. GPS might not be ready.',
+                        'device_id': data['device_id']
+                    }, status=status.HTTP_200_OK)
                 
                 # Get or create tracking device
                 try:
                     device = TrackingDevice.objects.get(device_id=data['device_id'])
+                    logger.info(f"Found device: {device.device_id} for inmate: {device.inmate}")
                 except TrackingDevice.DoesNotExist:
+                    logger.error(f"Device {data['device_id']} not found in database")
                     return Response({
-                        'error': f"Device {data['device_id']} not found"
+                        'error': f"Device {data['device_id']} not found. Please register device first."
                     }, status=status.HTTP_404_NOT_FOUND)
                 
                 # Update device status
@@ -48,34 +66,44 @@ class LocationUpdateView(APIView):
                     device.status = 'active'
                 
                 device.save()
+                logger.info(f"Updated device status: {device.status}, battery: {device.battery_level}%")
                 
-                # Update or create current location (replaces existing)
-                current_location, created = CurrentLocation.objects.update_or_create(
-                    device=device,
-                    defaults={
-                        'latitude': data['latitude'],
-                        'longitude': data['longitude'],
-                        'altitude': data['altitude'],
-                        'speed': data['speed'],
-                        'satellites': data['satellites'],
-                        'accuracy': data['accuracy'],
-                        'timestamp': data['timestamp']
-                    }
-                )
+                # Update or create current location
+                try:
+                    current_location, created = CurrentLocation.objects.update_or_create(
+                        device=device,
+                        defaults={
+                            'latitude': data['latitude'],
+                            'longitude': data['longitude'],
+                            'altitude': data['altitude'],
+                            'speed': data['speed'],
+                            'satellites': data['satellites'],
+                            'accuracy': data['accuracy'],
+                            'timestamp': data['timestamp']
+                        }
+                    )
+                    logger.info(f"{'Created' if created else 'Updated'} location for device {device.device_id}: lat={data['latitude']}, lng={data['longitude']}")
+                except Exception as e:
+                    logger.error(f"Error updating location: {str(e)}")
+                    raise
                 
-                # Save to history (every 5 minutes or significant movement)
+                # Save to history
                 should_save_history = self.should_save_to_history(device, data)
                 if should_save_history:
-                    LocationHistory.objects.create(
-                        device=device,
-                        latitude=data['latitude'],
-                        longitude=data['longitude'],
-                        altitude=data['altitude'],
-                        speed=data['speed'],
-                        satellites=data['satellites'],
-                        accuracy=data['accuracy'],
-                        timestamp=data['timestamp']
-                    )
+                    try:
+                        LocationHistory.objects.create(
+                            device=device,
+                            latitude=data['latitude'],
+                            longitude=data['longitude'],
+                            altitude=data['altitude'],
+                            speed=data['speed'],
+                            satellites=data['satellites'],
+                            accuracy=data['accuracy'],
+                            timestamp=data['timestamp']
+                        )
+                        logger.info(f"Saved location to history for device {device.device_id}")
+                    except Exception as e:
+                        logger.error(f"Error saving to history: {str(e)}")
                 
                 # Check geofence violations
                 GeofenceChecker.check_violations(device, data['latitude'], data['longitude'])
@@ -91,12 +119,14 @@ class LocationUpdateView(APIView):
                     'timestamp': timezone.now()
                 }, status=status.HTTP_200_OK)
             
+            logger.error(f"Invalid data received: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
         except Exception as e:
             logger.error(f"Error updating location: {str(e)}")
             return Response({
-                'error': 'Internal server error'
+                'error': 'Internal server error',
+                'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def should_save_to_history(self, device, new_data):

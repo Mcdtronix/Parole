@@ -194,7 +194,7 @@ function initRealTimeMap() {
             }
         ]
     });
-
+    
     console.log('Map initialized');
     loadRealTimeData();
     
@@ -226,6 +226,12 @@ function updateRealTimeMap(data) {
     
     // Add location markers
     data.locations.forEach(location => {
+        // Skip zero coordinates
+        if (location.latitude === 0 && location.longitude === 0) {
+            console.log(`Skipping zero coordinates for device ${location.device_id}`);
+            return;
+        }
+
         const marker = new google.maps.Marker({
             position: { lat: location.latitude, lng: location.longitude },
             map: realTimeMap,
@@ -250,8 +256,27 @@ function updateRealTimeMap(data) {
         markers.push(marker);
     });
     
+    // If no valid markers, show a message
+    if (markers.length === 0) {
+        const noDataDiv = document.createElement('div');
+        noDataDiv.className = 'alert alert-info position-absolute';
+        noDataDiv.style.top = '10px';
+        noDataDiv.style.left = '50%';
+        noDataDiv.style.transform = 'translateX(-50%)';
+        noDataDiv.style.zIndex = '1000';
+        noDataDiv.innerHTML = `
+            <i class="fas fa-info-circle"></i>
+            No valid GPS coordinates available. Waiting for GPS fix...
+        `;
+        document.getElementById('real-time-map').appendChild(noDataDiv);
+    }
+    
     // Add alert markers
     data.alerts.forEach(alert => {
+        if (alert.latitude === 0 && alert.longitude === 0) {
+            return;
+        }
+
         const marker = new google.maps.Marker({
             position: { lat: alert.latitude, lng: alert.longitude },
             map: realTimeMap,
