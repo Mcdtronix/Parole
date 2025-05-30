@@ -4,8 +4,8 @@ from .models import *
 
 class LocationUpdateSerializer(serializers.Serializer):
     device_id = serializers.CharField(max_length=50)
-    latitude = serializers.DecimalField(max_digits=10, decimal_places=6)
-    longitude = serializers.DecimalField(max_digits=10, decimal_places=6)
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
     altitude = serializers.FloatField(default=0.0)
     speed = serializers.FloatField(default=0.0)
     satellites = serializers.IntegerField(default=0)

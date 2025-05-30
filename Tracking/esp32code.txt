@@ -1,0 +1,510 @@
+#include <HardwareSerial.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// GPS Serial communication
+HardwareSerial gpsSerial(2);
+
+// WiFi credentials (replace with your network)
+const char* ssid = "Great People";
+const char* password = "gr3@tp3opl3";
+
+// Server endpoint (replace with your Django server URL)
+const char* serverURL = "http://192.168.1.92:8000/api/location/";  // Replace XXX with your computer's IP on 192.168.1.x network
+
+// GPS data structure
+struct GPSData {
+  double latitude = 0.0;
+  double longitude = 0.0;
+  float altitude = 0.0;
+  float speed = 0.0;
+  int satellites = 0;
+  bool isValid = false;
+  String timestamp = "";
+};
+
+GPSData currentLocation;
+String deviceID = "PAROLE_DEVICE_001"; // Unique identifier for each device
+
+// Timing variables
+unsigned long lastGPSRead = 0;
+unsigned long lastDataSend = 0;
+const unsigned long GPS_READ_INTERVAL = 2000;    // Read GPS every 2 seconds
+const unsigned long DATA_SEND_INTERVAL = 15000;  // Send data every 15 seconds
+
+// Connection retry variables
+int wifiRetryCount = 0;
+const int MAX_WIFI_RETRIES = 3;
+
+void setup() {
+  Serial.begin(115200);
+  gpsSerial.begin(9600, SERIAL_8N1, 16, 17); // RX=16, TX=17
+  
+  Serial.println("ESP32 GPS Tracker Starting...");
+  
+  // Initialize WiFi with better error handling
+  connectToWiFi();
+  
+  Serial.println("GPS Tracker Ready!");
+  Serial.println("Waiting for GPS fix...");
+  
+  // Send initial test message
+  delay(2000);
+  discoverNetworkInfo();
+  scanNetwork();
+  sendTestMessage();
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  
+  // Check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected. Attempting reconnection...");
+    connectToWiFi();
+  }
+  
+  // Read GPS data at regular intervals
+  if (currentTime - lastGPSRead >= GPS_READ_INTERVAL) {
+    readGPSData();
+    lastGPSRead = currentTime;
+  }
+  
+  // Send data to server at regular intervals (even without GPS fix for testing)
+  if (currentTime - lastDataSend >= DATA_SEND_INTERVAL) {
+    if (currentLocation.isValid) {
+      sendLocationData();
+    } else {
+      // Send test data even without GPS fix to verify server connection
+      sendTestData();
+    }
+    lastDataSend = currentTime;
+  }
+  
+  // Display current status
+  displayStatus();
+  delay(1000);
+}
+
+void connectToWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("Connected to WiFi. IP address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Signal strength (RSSI): ");
+    Serial.println(WiFi.RSSI());
+    wifiRetryCount = 0;
+  } else {
+    Serial.println();
+    Serial.println("Failed to connect to WiFi!");
+    wifiRetryCount++;
+    
+    if (wifiRetryCount < MAX_WIFI_RETRIES) {
+      Serial.println("Retrying WiFi connection in 5 seconds...");
+      delay(5000);
+      connectToWiFi();
+    }
+  }
+}
+
+void readGPSData() {
+  while (gpsSerial.available()) {
+    String nmea = gpsSerial.readStringUntil('\n');
+    nmea.trim(); // Remove whitespace and newlines
+    if (nmea.length() > 0) {
+      parseNMEA(nmea);
+    }
+  }
+}
+
+void parseNMEA(String nmea) {
+  if (nmea.startsWith("$GPGGA") || nmea.startsWith("$GNGGA")) {
+    parseGGA(nmea);
+  } else if (nmea.startsWith("$GPRMC") || nmea.startsWith("$GNRMC")) {
+    parseRMC(nmea);
+  }
+}
+
+void parseGGA(String gga) {
+  int fieldIndex = 0;
+  String fields[15];
+  int startIndex = 0;
+  
+  // Better parsing with proper field separation
+  for (int i = 0; i < gga.length(); i++) {
+    if (gga.charAt(i) == ',' || i == gga.length() - 1) {
+      fields[fieldIndex] = gga.substring(startIndex, i);
+      startIndex = i + 1;
+      fieldIndex++;
+      if (fieldIndex >= 15) break;
+    }
+  }
+  
+  // Check if we have a valid fix
+  if (fields[6].length() > 0 && fields[6].toInt() > 0) {
+    currentLocation.isValid = true;
+    currentLocation.satellites = fields[7].toInt();
+    
+    // Parse latitude with better precision
+    if (fields[2].length() > 0) {
+      double lat = fields[2].toDouble();
+      int degrees = (int)(lat / 100);
+      double minutes = lat - (degrees * 100);
+      currentLocation.latitude = degrees + (minutes / 60.0);
+      if (fields[3] == "S") currentLocation.latitude = -currentLocation.latitude;
+    }
+    
+    // Parse longitude with better precision
+    if (fields[4].length() > 0) {
+      double lon = fields[4].toDouble();
+      int degrees = (int)(lon / 100);
+      double minutes = lon - (degrees * 100);
+      currentLocation.longitude = degrees + (minutes / 60.0);
+      if (fields[5] == "W") currentLocation.longitude = -currentLocation.longitude;
+    }
+    
+    // Parse altitude
+    if (fields[9].length() > 0) {
+      currentLocation.altitude = fields[9].toFloat();
+    }
+    
+    Serial.println("GPS Fix obtained!");
+  } else {
+    currentLocation.isValid = false;
+  }
+}
+
+void parseRMC(String rmc) {
+  int fieldIndex = 0;
+  String fields[12];
+  int startIndex = 0;
+  
+  for (int i = 0; i < rmc.length(); i++) {
+    if (rmc.charAt(i) == ',' || i == rmc.length() - 1) {
+      fields[fieldIndex] = rmc.substring(startIndex, i);
+      startIndex = i + 1;
+      fieldIndex++;
+      if (fieldIndex >= 12) break;
+    }
+  }
+  
+  // Parse speed (knots to km/h)
+  if (fields[7].length() > 0) {
+    currentLocation.speed = fields[7].toFloat() * 1.852;
+  }
+  
+  // Parse timestamp
+  if (fields[1].length() > 0 && fields[9].length() > 0) {
+    String time = fields[1];
+    String date = fields[9];
+    currentLocation.timestamp = formatDateTime(date, time);
+  }
+}
+
+String formatDateTime(String date, String time) {
+  if (date.length() >= 6 && time.length() >= 6) {
+    String day = date.substring(0, 2);
+    String month = date.substring(2, 4);
+    String year = "20" + date.substring(4, 6);
+    
+    String hour = time.substring(0, 2);
+    String minute = time.substring(2, 4);
+    String second = time.substring(4, 6);
+    
+    return year + "-" + month + "-" + day + "T" + hour + ":" + minute + ":" + second + "Z";
+  }
+  return "";
+}
+
+void sendTestMessage() {
+  Serial.println("Sending initial test message to server...");
+  
+  // First, let's test basic connectivity
+  testServerConnectivity();
+  delay(2000);
+  sendTestData();
+}
+
+void scanNetwork() {
+  Serial.println("\n=== Network Scan ===");
+  Serial.println("Scanning for active devices on your network...");
+  
+  IPAddress baseIP = WiFi.localIP();
+  String baseNetwork = String(baseIP[0]) + "." + String(baseIP[1]) + "." + String(baseIP[2]) + ".";
+  
+  Serial.println("Checking common server IPs:");
+  
+  // Check common IPs that might be your computer
+  int testIPs[] = {1, 92, 100, 101, 102, 150, 200, 254};
+  int numIPs = sizeof(testIPs) / sizeof(testIPs[0]);
+  
+  WiFiClient client;
+  
+  for (int i = 0; i < numIPs; i++) {
+    String testIP = baseNetwork + String(testIPs[i]);
+    Serial.print("Testing " + testIP + ":8000... ");
+    
+    if (client.connect(testIP.c_str(), 8000)) {
+      Serial.println("✓ FOUND ACTIVE SERVER!");
+      client.stop();
+      
+      if (testIP != "192.168.1.92") {
+        Serial.println("*** Consider updating serverURL to: http://" + testIP + ":8000/api/location/ ***");
+      }
+    } else {
+      Serial.println("✗");
+    }
+    delay(100);
+  }
+  
+  Serial.println("========================\n");
+}
+
+void discoverNetworkInfo() {
+  Serial.println("\n=== Network Discovery ===");
+  Serial.println("ESP32 IP: " + WiFi.localIP().toString());
+  Serial.println("Gateway IP: " + WiFi.gatewayIP().toString());
+  Serial.println("Subnet Mask: " + WiFi.subnetMask().toString());
+  Serial.println("DNS Server: " + WiFi.dnsIP().toString());
+  
+  // Calculate network range
+  IPAddress ip = WiFi.localIP();
+  IPAddress subnet = WiFi.subnetMask();
+  
+  Serial.println("Network range: " + String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + ".1-254");
+  Serial.println("Your server should be in this range!");
+  Serial.println("========================\n");
+}
+
+void testServerConnectivity() {
+  Serial.println("\n=== Testing Server Connectivity ===");
+  
+  // Extract IP and port from serverURL
+  String serverIP = "192.168.97.247";
+  int serverPort = 8000;
+  
+  Serial.println("Testing connection to: " + serverIP + ":" + String(serverPort));
+  
+  WiFiClient client;
+  if (client.connect(serverIP.c_str(), serverPort)) {
+    Serial.println("✓ TCP connection successful!");
+    client.stop();
+  } else {
+    Serial.println("✗ TCP connection failed!");
+    Serial.println("Possible issues:");
+    Serial.println("1. Django server not running");
+    Serial.println("2. Wrong IP address");
+    Serial.println("3. Firewall blocking connection");
+    Serial.println("4. Different network subnet");
+  }
+  
+  // Test ping (basic reachability)
+  Serial.println("Your ESP32 IP: " + WiFi.localIP().toString());
+  Serial.println("Target server IP: " + serverIP);
+  Serial.println("========================\n");
+}
+
+void sendTestData() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected - cannot send test data");
+    return;
+  }
+  
+  HTTPClient http;
+  WiFiClient client;
+  
+  Serial.println("Sending test data to: " + String(serverURL));
+  
+  http.begin(client, serverURL);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("User-Agent", "ESP32-GPS-Tracker");
+  http.setTimeout(10000); // 10 second timeout
+  
+  // Create test JSON payload matching LocationUpdateSerializer
+  DynamicJsonDocument doc(256);
+  doc["device_id"] = "PAROLE_DEVICE_001";  // Changed from "device" to "device_id"
+  doc["latitude"] = currentLocation.isValid ? String(currentLocation.latitude, 6) : "-17.821600";
+  doc["longitude"] = currentLocation.isValid ? String(currentLocation.longitude, 6) : "31.049200";
+  doc["altitude"] = currentLocation.altitude;
+  doc["speed"] = currentLocation.speed;
+  doc["satellites"] = currentLocation.satellites;
+  doc["accuracy"] = 5.0;
+  doc["battery_level"] = getBatteryLevel();  // Added missing battery_level field
+  doc["timestamp"] = currentLocation.timestamp.length() > 0 ? currentLocation.timestamp : "2025-05-30T12:00:00Z";
+  doc["status"] = "normal";  // Added status field
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  Serial.println("JSON payload:");
+  Serial.println(jsonString);
+  
+  int httpResponseCode = http.POST(jsonString);
+  
+  Serial.println("HTTP Response code: " + String(httpResponseCode));
+  
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("Server response: " + response);
+    
+    if (httpResponseCode == 200 || httpResponseCode == 201) {
+      Serial.println("✓ Data sent successfully!");
+    } else {
+      Serial.println("⚠ Server returned error code: " + String(httpResponseCode));
+      Serial.println("Response body: " + response);
+      
+      // Common fixes for 400 errors
+      if (httpResponseCode == 400) {
+        Serial.println("Bad Request - Check these common issues:");
+        Serial.println("1. Missing required fields in Django model");
+        Serial.println("2. Wrong data types (string vs number)");
+        Serial.println("3. Invalid timestamp format");
+        Serial.println("4. CSRF token required");
+      }
+    }
+  } else {
+    Serial.println("✗ HTTP Error: " + String(httpResponseCode));
+    Serial.println("Error description: " + http.errorToString(httpResponseCode));
+    
+    // More detailed error information
+    switch (httpResponseCode) {
+      case HTTPC_ERROR_CONNECTION_REFUSED:
+        Serial.println("Connection refused - check server IP and port");
+        break;
+      case HTTPC_ERROR_SEND_HEADER_FAILED:
+        Serial.println("Failed to send headers");
+        break;
+      case HTTPC_ERROR_SEND_PAYLOAD_FAILED:
+        Serial.println("Failed to send payload");
+        break;
+      case HTTPC_ERROR_NOT_CONNECTED:
+        Serial.println("Not connected to server");
+        break;
+      case HTTPC_ERROR_CONNECTION_LOST:
+        Serial.println("Connection lost during transmission");
+        break;
+      case HTTPC_ERROR_READ_TIMEOUT:
+        Serial.println("Read timeout");
+        break;
+      default:
+        Serial.println("Unknown HTTP error");
+        break;
+    }
+  }
+  
+  http.end();
+}
+
+void sendLocationData() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected - cannot send location data");
+    return;
+  }
+  
+  HTTPClient http;
+  WiFiClient client;
+  
+  Serial.println("Sending GPS location data to: " + String(serverURL));
+  
+  http.begin(client, serverURL);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("User-Agent", "ESP32-GPS-Tracker");
+  http.setTimeout(10000); // 10 second timeout
+  
+  // Create JSON payload matching LocationUpdateSerializer exactly
+  DynamicJsonDocument doc(256);
+  doc["device_id"] = "PAROLE_DEVICE_001";  // Changed from device ID number to device_id string
+  doc["latitude"] = String(currentLocation.latitude, 6);  // DecimalField requires string
+  doc["longitude"] = String(currentLocation.longitude, 6);  // DecimalField requires string
+  doc["altitude"] = currentLocation.altitude;
+  doc["speed"] = currentLocation.speed;
+  doc["satellites"] = currentLocation.satellites;
+  doc["accuracy"] = calculateAccuracy();
+  doc["battery_level"] = getBatteryLevel();  // Added missing battery_level field
+  doc["timestamp"] = currentLocation.timestamp;
+  doc["status"] = "normal";  // Added status field
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  Serial.println("GPS JSON payload:");
+  Serial.println(jsonString);
+  
+  int httpResponseCode = http.POST(jsonString);
+  
+  Serial.println("HTTP Response code: " + String(httpResponseCode));
+  
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("Server response: " + response);
+    
+    if (httpResponseCode == 200 || httpResponseCode == 201) {
+      Serial.println("✓ GPS data sent successfully!");
+    } else {
+      Serial.println("⚠ Server returned error code: " + String(httpResponseCode));
+      Serial.println("Response body: " + response);
+    }
+  } else {
+    Serial.println("✗ Failed to send GPS data. Error: " + String(httpResponseCode));
+    Serial.println("Error description: " + http.errorToString(httpResponseCode));
+  }
+  
+  http.end();
+}
+
+float calculateAccuracy() {
+  // Estimate accuracy based on number of satellites
+  if (currentLocation.satellites >= 8) return 3.0;
+  else if (currentLocation.satellites >= 6) return 5.0;
+  else if (currentLocation.satellites >= 4) return 10.0;
+  else return 20.0;
+}
+
+float getBatteryLevel() {
+  // Read battery voltage (if connected to analog pin)
+  // For now, return a simulated decreasing value
+  static float batteryLevel = 100.0;
+  batteryLevel -= 0.01; // Simulate battery drain
+  if (batteryLevel < 0) batteryLevel = 100.0;
+  return batteryLevel;
+}
+
+void displayStatus() {
+  Serial.println("\n=== GPS Tracker Status ===");
+  Serial.println("Device ID: " + deviceID);
+  Serial.println("WiFi Status: " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected"));
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("IP Address: " + WiFi.localIP().toString());
+    Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
+  }
+  
+  if (currentLocation.isValid) {
+    Serial.println("GPS Status: ✓ FIXED");
+    Serial.println("Latitude: " + String(currentLocation.latitude, 8));
+    Serial.println("Longitude: " + String(currentLocation.longitude, 8));
+    Serial.println("Altitude: " + String(currentLocation.altitude, 1) + " m");
+    Serial.println("Speed: " + String(currentLocation.speed, 1) + " km/h");
+    Serial.println("Satellites: " + String(currentLocation.satellites));
+    Serial.println("Accuracy: ±" + String(calculateAccuracy()) + " m");
+    Serial.println("Timestamp: " + currentLocation.timestamp);
+  } else {
+    Serial.println("GPS Status: ✗ NO FIX - Searching for satellites...");
+    Serial.println("Satellites visible: " + String(currentLocation.satellites));
+  }
+  
+  Serial.println("Battery: " + String(getBatteryLevel(), 1) + "%");
+  Serial.println("Free heap: " + String(ESP.getFreeHeap()) + " bytes");
+  Serial.println("========================\n");
+}

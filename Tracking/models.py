@@ -66,8 +66,8 @@ class TrackingDevice(models.Model):
 class CurrentLocation(models.Model):
     """Stores only the latest location for each device - updates in place"""
     device = models.OneToOneField(TrackingDevice, on_delete=models.CASCADE, related_name='current_location')
-    latitude = models.DecimalField(max_digits=10, decimal_places=6)
-    longitude = models.DecimalField(max_digits=10, decimal_places=6)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
     altitude = models.FloatField(default=0.0)
     speed = models.FloatField(default=0.0)  # km/h
     satellites = models.IntegerField(default=0)
